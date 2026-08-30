@@ -1,0 +1,82 @@
+name: Publish calendar feeds
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "feeds/*.ics"
+      - "scripts/build_calendar_feeds.py"
+      - "tests/test_build_calendar_feeds.py"
+      - ".github/workflows/publish-calendars.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: pages-calendar-subscribe
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Run tests
+        run: python3 -m unittest discover -s tests -p "test_build_calendar_feeds.py"
+
+      - name: Validate feeds
+        run: python3 scripts/build_calendar_feeds.py --check
+
+      - name: Build public calendars
+        run: python3 scripts/build_calendar_feeds.py
+
+      - name: Verify public artifact boundary
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          files = sorted(
+              path.relative_to("public").as_posix()
+              for path in Path("public").rglob("*")
+              if path.is_file()
+          )
+          unexpected = [
+              name
+              for name in files
+              if name != "index.html" and not name.endswith(".ics")
+          ]
+          if unexpected or "all.ics" not in files or "index.html" not in files:
+              raise SystemExit(f"unexpected public files: {files}")
+          print(f"verified public files: {files}")
+          PY
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload public calendars
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
